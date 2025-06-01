@@ -24,10 +24,10 @@ op_profile = [1, 0, 1, 0]
 
 #-----------------Import geomodel-------------------
 #geomod_name = f'{geomod_names}_{geomod_ID}_{Vin}_{InjT}'
-geomod_path = os.path.join("geomodels", 'PNA1_200k.nc')
+#geomod_path = os.path.join("geomodels", 'PNA1_200k.nc')
 
 # Load the dataset
-geomodel = xr.load_dataset(geomod_path)
+geomodel = xr.load_dataset('PNA1_200k.nc')
 XGR = geomodel['XGR'].values
 YGR = geomodel['YGR'].values
 ZGR = geomodel['ZGR'].values
