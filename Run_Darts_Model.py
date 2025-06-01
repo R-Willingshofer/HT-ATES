@@ -24,7 +24,6 @@ op_profile = [1, 0, 1, 0]
 
 #-----------------Import geomodel-------------------
 #geomod_name = f'{geomod_names}_{geomod_ID}_{Vin}_{InjT}'
-# Use relative path to access the 'geomodels' directory
 geomod_path = os.path.join("geomodels", 'PNA1_200k.nc')
 
 # Load the dataset
