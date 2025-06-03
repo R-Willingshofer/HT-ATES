@@ -45,16 +45,12 @@ output_well_data_excel = os.path.join(output_directory, 'well_data_output_test.x
 #-----------------Create DARTS ATES model--------------
 m = Model(XGR, YGR, ZGR, porosity, horizontal_permeability, vertical_permeability, Cp, lam)
 m.init()
-
-
-#write initial conditions
-m.output_to_vtk(ith_step=0, output_directory=output_directory)
+m.set_output()
 
 set_transition_runtime = 1e-5
 set_run_years = 3
 
 flw_rates = [x * Q_hot for x in op_profile]
-# coldrates = [x * Q_cold for x in op_profile]
 
 iterr=1
 for k in range(set_run_years):
@@ -75,11 +71,12 @@ for k in range(set_run_years):
             print('Operation: Rest')
 
         m.run(runtime, restart_dt=set_transition_runtime)
-        m.output_to_vtk(ith_step=iterr, output_directory=output_directory)
         print("\nIterr :",iterr,"\tYear :",k, "\tRun Time :",runtime)
         print("\n")
         iterr+=1
 m.print_stat()
+output_props = ['temperature', 'pressure']
+m.output.output_to_vtk(output_properties=output_props) # output all saved time steps to vtk
 #%%-----------------Write Results to Excel-----------------
 # output well information to Excel file
 td = pd.DataFrame.from_dict(m.physics.engine.time_data)

@@ -1,17 +1,18 @@
+from darts.discretizer import value_vector
 from darts.physics.geothermal.physics import Geothermal
 from darts.physics.geothermal.property_container import PropertyContainer
 from darts.models.darts_model import DartsModel
-from darts.engines import redirect_darts_output
-from darts.reservoirs.cpg_reservoir import CPG_Reservoir
-from darts.tools.gen_cpg_grid import gen_cpg_grid
+from darts.engines import redirect_darts_output, well_control_iface, sim_params
+from darts.reservoirs.struct_reservoir import StructReservoir
 
-redirect_darts_output('LogFile_Run_HT_ATES_DELFT_lam10.log')
+redirect_darts_output('LogFile_Run_HT_ATES_DELFT.log')
 
 from darts.engines import set_num_threads
 
 set_num_threads(4)
 
 import numpy as np
+
 
 # %%
 class Model(DartsModel):
@@ -41,47 +42,30 @@ class Model(DartsModel):
 
         self.depth_to_top = 115  # [m]
 
-        # === Discretize grid ===
-        arrays = gen_cpg_grid(
-            nx=self.nx, ny=self.ny, nz=self.nz,
-            dx=dx_list, dy=dy_list, dz=dz_list,
-            start_z=self.depth_to_top,
-            permx=perm_x, permy=perm_y, permz=perm_z, poro=poro
-        )
-
-        self.reservoir = CPG_Reservoir(self.timer, arrays)
-        self.reservoir.discretize()
-
+        self.reservoir = StructReservoir(self.timer, nx=self.nx, ny=self.ny, nz=self.nz,
+                                         dx=dx_list, dy=dy_list, dz=dz_list,
+                                         permx=perm_x, permy=perm_y, permz=perm_z,
+                                         poro=poro, start_z=self.depth_to_top)
         # === Thermal properties ===
         self.reservoir.hcap[:] = Cp.flatten()
-        self.reservoir.conduction[:] = lam.flatten()
+        self.reservoir.rcond[:] = lam.flatten()
 
-        #self.reservoir.set_boundary_volume(yz_minus=1e15, yz_plus=1e15, xz_minus=1e15, xz_plus=1e15)
-        self.reservoir.set_boundary_volume(
-            xy_minus=1e15,
-            xy_plus=1e15,
-            yz_minus=1e15,
-            yz_plus=1e15,
-            xz_minus=1e15,
-            xz_plus=1e15
-        )
+        #
+        self.reservoir.boundary_volumes['yz_minus'] = 1e20
+        self.reservoir.boundary_volumes['yz_plus'] = 1e20
+        self.reservoir.boundary_volumes['xz_minus'] = 1e20
+        self.reservoir.boundary_volumes['xz_plus'] = 1e20
 
-        # === Physics ===
-        property_container =PropertyContainer()
-        self.physics = Geothermal(self.timer, n_points, 0.1, 150, 500, 15000, cache=False)
+        # ------------create pre-defined physics for geothermal------------
+        property_container = PropertyContainer()
+        self.physics = Geothermal(self.timer, n_points, 0.1, 150, 500, 7500, cache=False)
         self.physics.add_property_region(property_container)
         self.physics.init_physics()
 
-        # === Time-stepping ===
-        self.params.first_ts = 1e-5
-        self.params.mult_ts = 2
-        self.params.max_ts = 30
-
-        # === Solver tolerances ===
-        self.params.tolerance_newton = 1e-4
-
+        self.set_sim_params(first_ts=1e-3, mult_ts=8, max_ts=30, runtime=3650, tol_newton=1e-4, tol_linear=1e-8,
+                            it_newton=20, it_linear=40, newton_type=sim_params.newton_global_chop,
+                            newton_params=value_vector([1]))
         self.timer.node["initialization"].stop()
-
 
     def set_wells(self):
         top_ind = self.n_ly_cap + 1
@@ -91,52 +75,63 @@ class Model(DartsModel):
         self.reservoir.add_well("L1")
 
         for i in range(top_ind, btm_ind + 1):
-            print("ind: ", i)
-            # Change the index of the well location to the actual thing, also find a more elegant way of providing this (in the gridding function ideally)
-            self.reservoir.add_perforation("H1", cell_index=(int(19), int(self.ny / 2), i), verbose=True)
-            self.reservoir.add_perforation("L1", cell_index=(int(51), int(self.ny / 2), i), verbose=True)
+            self.reservoir.add_perforation("H1",
+                                           cell_index=(int(self.nx / 2), int(self.ny * 3.5 / 5), i),
+                                           verbose=True,
+                                           multi_segment=False,
+                                           well_indexD=0)
+                                           # well_index=50,
+                                           # well_indexD=0)
+            self.reservoir.add_perforation("L1",
+                                           cell_index=(int(self.nx / 2), int(self.ny * 1.5 / 5), i),
+                                           verbose=True,
+                                           multi_segment=False,
+                                           well_indexD=0)
+                                           #  well_index=50,
+                                           # well_indexD=0)
 
 
     def set_initial_conditions(self):
-        self.physics.set_nonuniform_initial_conditions(self.reservoir.mesh,
-                                                   pressure_grad=100,  # bar/km
-                                                   temperature_grad=18,  # C/km
-                                                   T_at_ref_depth=(273.15 + 10))  # Temp at Surface 10 Celcius
-
-
-    def set_boundary_conditions(self):
-        # activate wells with rate control for inejctor and producer
+        input_depth = [0., np.amax(self.reservoir.mesh.depth)]
+        input_distribution = {'pressure': [1., 1. + input_depth[1] * 100. / 1000],
+                              'temperature': [283.15, 283.15 + input_depth[1] * 18. / 1000]}
+        return self.physics.set_initial_conditions_from_depth_table(self.reservoir.mesh,
+                                                                    input_distribution=input_distribution,
+                                                                    input_depth=input_depth)
+    def set_well_controls(self, h_func=None, l_func=None):
         for i, w in enumerate(self.reservoir.wells):
-        # if 'INJ' in w.name:
             if 'H' in w.name:
-                w.control = self.physics.new_rate_water_prod(0)
+                self.physics.set_well_controls(wctrl=w.control, control_type=well_control_iface.VOLUMETRIC_RATE,
+                                               is_inj=True, target=0., phase_name='water', inj_composition=[],
+                                               inj_temp=273.15 + 90)
             else:
-                w.control = self.physics.new_rate_water_prod(0)
-
-    # def set_rate_hot(self, rate, welln=0, temp=300, func='inj'):
-
+                self.physics.set_well_controls(wctrl=w.control, control_type=well_control_iface.VOLUMETRIC_RATE,
+                                               is_inj=False, target=0., phase_name='water')
 
     def set_rate_hot(self, rate, temp=300, func='inj'):
-    # w = self.reservoir.wells[welln]
         for w in self.reservoir.wells:
             if 'H' in w.name:
                 if func == 'inj':
-                    w.control = self.physics.new_rate_water_inj(rate, temp)
-                # w.constraint = self.physics.new_bhp_water_inj(self.midrespress + self.bhp_limit, temp)
+                    self.physics.set_well_controls(wctrl=w.control,
+                                                   control_type=well_control_iface.VOLUMETRIC_RATE,
+                                                   is_inj=True, target=rate, phase_name='water', inj_composition=[],
+                                                   inj_temp=temp)
                 if func == 'prod':
-                    w.control = self.physics.new_rate_water_prod(rate)
-                # w.constraint = self.physics.new_bhp_prod(self.midrespress - self.bhp_limit)
-
-    # def set_rate_cold(self, rate, welln=1, temp=300, func='inj'):
-
+                    self.physics.set_well_controls(wctrl=w.control,
+                                                   control_type=well_control_iface.VOLUMETRIC_RATE,
+                                                   is_inj=False, target=rate, phase_name='water')
 
     def set_rate_cold(self, rate, temp=300, func='inj'):
-    # w = self.reservoir.wells[welln]
+        # w = self.reservoir.wells[welln]
         for w in self.reservoir.wells:
             if 'L' in w.name:
                 if func == 'inj':
-                    w.control = self.physics.new_rate_water_inj(rate, temp)
-                # w.constraint = self.physics.new_bhp_water_inj(self.midrespress + self.bhp_limit, temp)
+                    self.physics.set_well_controls(wctrl=w.control,
+                                                   control_type=well_control_iface.VOLUMETRIC_RATE,
+                                                   is_inj=True, target=rate, phase_name='water', inj_composition=[],
+                                                   inj_temp=temp)
+
                 if func == 'prod':
-                    w.control = self.physics.new_rate_water_prod(rate)
-                # w.constraint = self.physics.new_bhp_prod(self.midrespress - self.bhp_limit)
+                    self.physics.set_well_controls(wctrl=w.control,
+                                                   control_type=well_control_iface.VOLUMETRIC_RATE,
+                                                   is_inj=False, target=rate, phase_name='water')
