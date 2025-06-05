@@ -5,11 +5,18 @@ import os
 
 #Code originally created by Taylan Akin
 #Modified as part of the AES MSc thesis by Robin Willingshofer (2025)
+#Improved and updated to DARTS 1.3.0 by Yuan Chen (2025)
+#Modified to fit needs by Robin Willingshofer
+
 #--------------Initialize arrays for batch simulations-------------------
 geomod_names = ['PNA', 'RWK', 'BarSim']
-geomod_ID = [1, 2, 3, 4]
+geomod_ID = ['1', '2', '3', '4']
+kv = [2, 5]
+kv_str = str(kv)
 Vin = [200000, 600000, 2000000]
+Vin_str = str(Vin)
 Tinj = [90, 70]
+Tinj_str = str(Tinj)
 
 #--------------Operational parameters--------------
 Vin = Vin[0] #m3 per well per year
@@ -23,19 +30,28 @@ Q_cold = Vin/daysprofile[0]    #m3/day
 op_profile = [1, 0, 1, 0]
 
 #-----------------Import geomodel-------------------
-#geomod_name = f'{geomod_names}_{geomod_ID}_{Vin}_{InjT}'
-#geomod_path = os.path.join("geomodels", 'PNA1_200k.nc')
+
+#geomod_name = f'{geomod_names}_{geomod_ID}_{kv_str}_{Vin_str}'
+#geomod_path = os.path.join("geomodels", f'{geomod_name}.nc')
+#output_name = f'{geomod_name}_{Tinj_str}
 
 # Load the dataset
-geomodel = xr.load_dataset('PNA1_200k.nc')
+geomodel = xr.load_dataset('RWK_1_200k.nc')
 XGR = geomodel['XGR'].values
 YGR = geomodel['YGR'].values
 ZGR = geomodel['ZGR'].values
 porosity = geomodel['porosity'].values
 horizontal_permeability = geomodel['permeability'].values
-vertical_permeability = geomodel['kv2'].values
+vertical_permeability = geomodel['permeability'].values/kv[0]
 Cp = geomodel['Cv'].values
 lam = geomodel['lam'].values
+
+# Load well indices
+hwx = geomodel.attrs["hwx"]
+hwy = geomodel.attrs["hwy"]
+
+cwx = geomodel.attrs["cwx"]
+cwy = geomodel.attrs["cwy"]
 
 #----------------Output_dirs------------------------
 output_directory = os.path.join(os.getcwd(), 'vtk_output_test')
@@ -43,12 +59,12 @@ os.makedirs(output_directory, exist_ok=True)
 output_well_data_excel = os.path.join(output_directory, 'well_data_output_test.xlsx')
 
 #-----------------Create DARTS ATES model--------------
-m = Model(XGR, YGR, ZGR, porosity, horizontal_permeability, vertical_permeability, Cp, lam)
+m = Model(XGR, YGR, ZGR, porosity, horizontal_permeability, vertical_permeability, Cp, lam, hwx, hwy, cwx, cwy)
 m.init()
 m.set_output()
 
 set_transition_runtime = 1e-5
-set_run_years = 3
+set_run_years = 10
 
 flw_rates = [x * Q_hot for x in op_profile]
 

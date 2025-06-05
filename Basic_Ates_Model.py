@@ -17,9 +17,15 @@ import numpy as np
 # %%
 class Model(DartsModel):
 
-    def __init__(self, XGR, YGR, ZGR, porosity, horizontal_permeability, vertical_permeability, Cp, lam, n_points=64):
+    def __init__(self, XGR, YGR, ZGR, porosity, horizontal_permeability, vertical_permeability, Cp, lam, hwx, hwy, cwx, cwy, n_points=64):
         super().__init__()
         self.timer.node["initialization"].start()
+
+        #Set Well indices (test)
+        self.hwx = hwx
+        self.hwy = hwy
+        self.cwx = cwx
+        self.cwy = cwy
 
         # === Grid dimensions ===
         self.nx = len(XGR) - 1
@@ -76,14 +82,14 @@ class Model(DartsModel):
 
         for i in range(top_ind, btm_ind + 1):
             self.reservoir.add_perforation("H1",
-                                           cell_index=(int(self.nx / 2), int(self.ny * 3.5 / 5), i),
+                                           cell_index=(self.hwx, self.hwy, i),
                                            verbose=True,
                                            multi_segment=False,
                                            well_indexD=0)
                                            # well_index=50,
                                            # well_indexD=0)
             self.reservoir.add_perforation("L1",
-                                           cell_index=(int(self.nx / 2), int(self.ny * 1.5 / 5), i),
+                                           cell_index=(self.cwx, self.cwy, i),
                                            verbose=True,
                                            multi_segment=False,
                                            well_indexD=0)
