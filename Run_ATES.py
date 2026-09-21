@@ -6,93 +6,69 @@ import xarray as xr
 import pandas as pd
 import numpy as np
 
-def create_geomodel_confined_disc_opt(nx, ny, nx_large, ny_large,
-                                      nz_aq, nz_conf, nz_actnum,
-                                      dx, dy, dz, dx_large, dy_large,
-                                      start_z,
-                                      perm_h, perm_v, porosity, h_cap, t_cond,
-                                      perm_h_conf, perm_v_conf, porosity_conf, h_cap_conf, t_cond_conf,
-                                      hwx, hwy):
+def create_geomodel_uni_dxy(nx, ny,
+                            nz_at_top, nz_aq, nz_at_bot,
+                            dx, dy, dz, dz_at_top, dz_at_bot, start_z,
+                            perm_h, perm_v, porosity, h_cap, t_cond,
+                            perm_h_conf, perm_v_conf, porosity_conf, h_cap_conf, t_cond_conf,
+                            hwx, hwy):
 
     "nz_conf includes the nz_actnum"
 
     #create dx arrays
-    dx_l = np.tile(dx_large, nx_large)
-    dx_c = np.tile(dx, nx)
-    dx_r = np.tile(dx_large, nx_large)
-    dx_full = np.concatenate([dx_l, dx_c, dx_r])
+    dx_array = np.tile(dx, nx)
+    dy_array = np.tile(dy, ny)
+    print(dx_array)
 
-    x_cell_edges = np.insert(np.cumsum(dx_full), 0 ,0)
+    x_centers = np.cumsum(dx_array) - 0.5 * dx
+    y_centers = np.cumsum(dy_array) - 0.5 * dy
 
-    x_cell_centers = []
-    for i in range(len(x_cell_edges) - 1):
-        x_edge_left = x_cell_edges[i]
-        x_edge_right = x_cell_edges[i + 1]
-        x_center_val = (x_edge_left + x_edge_right)/2
-        x_cell_centers.append(x_center_val)
+    dz_aq_array = np.tile(dz, nz_aq)
+    dz_at_top_array = np.tile(dz_at_top, nz_at_top)
+    dz_at_bot_array = np.tile(dz_at_bot, nz_at_bot)
+    dz_array = np.concatenate([dz_at_top_array, dz_aq_array, dz_at_bot_array], axis = 0)
+    print(dz_array)
 
-    # create dy arrays
-    dy_d = np.tile(dy_large, ny_large)
-    dy_c = np.tile(dy, ny)
-    dy_u = np.tile(dy_large, ny_large)
-    dy_full = np.concatenate([dy_d, dy_c, dy_u])
+    # Not entirely accurate
+    z_centers = np.cumsum(dz_array) - 0.5 * dz
 
-    y_cell_edges = np.insert(np.cumsum(dy_full), 0, 0)
+    # Property arrays aquifer
+    permeability_xy_cells = np.full((nx, ny, nz_aq), perm_h)
+    permeability_z_cells  = np.full((nx, ny, nz_aq), perm_v)
+    porosity_cells        = np.full((nx, ny, nz_aq), porosity)
+    heat_capacity_cells   = np.full((nx, ny, nz_aq), h_cap)
+    thermal_conductivity_cells = np.full((nx, ny, nz_aq), t_cond)
 
-    y_cell_centers = []
-    for i in range(len(y_cell_edges) - 1):
-        y_edge_left = y_cell_edges[i]
-        y_edge_right = y_cell_edges[i + 1]
-        y_center_val = (y_edge_left + y_edge_right) / 2
-        y_cell_centers.append(y_center_val)
+    # Confining layers aquitard top
+    at_top_permeability_xy_cells = np.full((nx, ny, nz_at_top), perm_h_conf)
+    at_top_permeability_z_cells  = np.full((nx, ny, nz_at_top), perm_v_conf)
+    at_top_porosity_cells        = np.full((nx, ny, nz_at_top), porosity_conf)
+    at_top_heat_capacity_cells   = np.full((nx, ny, nz_at_top), h_cap_conf)
+    at_top_thermal_conductivity_cells = np.full((nx, ny, nz_at_top), t_cond_conf)
 
-    # directional cell-count
-    nx_full = len(x_cell_centers)
-    ny_full = len(y_cell_centers)
-
-    z = np.arange(nz_conf + nz_aq + nz_conf + 1) * dz + start_z #+ dz / 2
-    z_center = z[:-1] + 0.5 * dz
-    dz_full = np.tile(2, len(z_center))
-    print("Domain z:", min(z), max(z))
-
-    # Property arrays
-    permeability_xy_cells = np.full((nx_full, ny_full, nz_aq), perm_h)
-    permeability_z_cells  = np.full((nx_full, ny_full, nz_aq), perm_v)
-    porosity_cells        = np.full((nx_full, ny_full, nz_aq), porosity)
-    heat_capacity_cells   = np.full((nx_full, ny_full, nz_aq), h_cap)
-    thermal_conductivity_cells = np.full((nx_full, ny_full, nz_aq), t_cond)
-
-    if nz_actnum > nz_conf:
-        print("nz_actnum should not be larger than nz_conf")
-
-    act_num1 = np.full((nx_full, ny_full, nz_aq + 2 * (nz_conf - nz_actnum)), 1)
-
-    # Confining layers
-    conf_permeability_xy_cells = np.full((nx_full, ny_full, nz_conf), perm_h_conf)
-    conf_permeability_z_cells  = np.full((nx_full, ny_full, nz_conf), perm_v_conf)
-    conf_porosity_cells        = np.full((nx_full, ny_full, nz_conf), porosity_conf)
-    conf_heat_capacity_cells   = np.full((nx_full, ny_full, nz_conf), h_cap_conf)
-    conf_thermal_conductivity_cells = np.full((nx_full, ny_full, nz_conf), t_cond_conf)
-
-    act_num0 = np.full((nx_full, ny_full, nz_actnum), 0)
+    # Confining layers aquitard bottom
+    at_bot_permeability_xy_cells = np.full((nx, ny, nz_at_bot), perm_h_conf)
+    at_bot_permeability_z_cells  = np.full((nx, ny, nz_at_bot), perm_v_conf)
+    at_bot_porosity_cells        = np.full((nx, ny, nz_at_bot), porosity_conf)
+    at_bot_heat_capacity_cells   = np.full((nx, ny, nz_at_bot), h_cap_conf)
+    at_bot_thermal_conductivity_cells = np.full((nx, ny, nz_at_bot), t_cond_conf)
 
     tot_permeability_xy = np.concatenate(
-        [conf_permeability_xy_cells, permeability_xy_cells, conf_permeability_xy_cells], axis = 2)
+        [at_top_permeability_xy_cells, permeability_xy_cells, at_bot_permeability_xy_cells], axis = 2)
     tot_permeability_z = np.concatenate(
-        [conf_permeability_z_cells, permeability_z_cells, conf_permeability_z_cells], axis=2)
+        [at_top_permeability_z_cells, permeability_z_cells, at_bot_permeability_z_cells], axis=2)
     tot_porosity = np.concatenate(
-        [conf_porosity_cells, porosity_cells, conf_porosity_cells], axis = 2)
+        [at_top_porosity_cells, porosity_cells, at_bot_porosity_cells], axis = 2)
     tot_heat_capacity = np.concatenate(
-        [conf_heat_capacity_cells, heat_capacity_cells, conf_heat_capacity_cells], axis = 2)
+        [at_top_heat_capacity_cells, heat_capacity_cells, at_bot_heat_capacity_cells], axis = 2)
     tot_t_cond = np.concatenate(
-        [conf_thermal_conductivity_cells, thermal_conductivity_cells, conf_thermal_conductivity_cells], axis = 2)
+        [at_top_thermal_conductivity_cells, thermal_conductivity_cells, at_bot_thermal_conductivity_cells], axis = 2)
 
-    tot_actnum = np.concatenate(
-        [act_num0, act_num1, act_num0], axis=2)
-
-    # Check shape
-    print(nx_full, ny_full)
-    print(np.shape(tot_permeability_xy))
+    print("perm:", np.max(tot_permeability_xy), np.mean(tot_permeability_xy))
+    print("vperm:", np.mean(tot_permeability_z), np.mean(tot_permeability_z))
+    print("por:", np.mean(tot_porosity), np.mean(tot_porosity))
+    print("heat:", np.mean(tot_heat_capacity), np.mean(tot_heat_capacity))
+    print("tcond:", np.mean(tot_t_cond), np.mean(tot_t_cond))
 
     geomodel = xr.Dataset(
         data_vars={
@@ -100,26 +76,24 @@ def create_geomodel_confined_disc_opt(nx, ny, nx_large, ny_large,
             "permeability_z":  (("x", "y", "z"), tot_permeability_z),
             "porosity":        (("x", "y", "z"), tot_porosity),
             "heat_capacity":   (("x", "y", "z"), tot_heat_capacity),
-            "thermal_conductivity": (("x", "y", "z"), tot_t_cond),
-            "actnum":          (("x", "y", "z"), tot_actnum)},
+            "thermal_conductivity": (("x", "y", "z"), tot_t_cond)},
 
         coords={
-            "x": x_cell_centers,
-            "y": y_cell_centers,
-            "z": z_center},
+            "x": x_centers,
+            "y": y_centers,
+            "z": z_centers},
 
         attrs={
+            "dx" : dx_array,
+            "dy" : dy_array,
+            "dz" : dz_array,
             "hwx" : hwx,
             "hwy" : hwy,
-            "dx": dx_full,
-            "dy": dy_full,
-            "dz": dz_full,
-            "nly_top" : nz_conf,
+            "nly_top" : nz_at_top,
             "nly_res" : nz_aq,
-            "nly_bot" : nz_conf,
-            "grid_type": "Varying"})
+            "nly_bot" : nz_at_bot,
+            "grid_type": "Uniform"})
 
-    print("Hot well x- and y-coordinate:", x_cell_centers[hwx], y_cell_centers[hwy])
     return geomodel
 
 def run_DARTS (simulation_name,
@@ -149,7 +123,6 @@ def run_DARTS (simulation_name,
     poro = geomodel['porosity'].values
     hcap = geomodel['heat_capacity'].values
     tcond = geomodel['thermal_conductivity'].values
-    actnum =geomodel["actnum"].values
 
     # Load XY-plane well indices
     hwx = geomodel.attrs['hwx']
@@ -163,6 +136,8 @@ def run_DARTS (simulation_name,
     nly_res = geomodel.attrs["nly_res"]
     nly_bot = geomodel.attrs["nly_bot"]
 
+    print("nly:", nly_top, nly_res, nly_bot)
+
     # --------------- Initial conditions reservoir -------
     geothermal_grad = 0 #(K / km), the geothermal gradient for the initial condition of the reservoir
 
@@ -171,12 +146,6 @@ def run_DARTS (simulation_name,
     InjT = 273.15 + Tin # (K)
     #TCutOff = 273.15 + tcuo # (K), Serves as the injection temperature of the warm well
 
-    # --------------- Simulation time and space settings  --------
-    set_run_years = nyears #Total simulation length (years)
-    max_ts = 1 #Maximum time step size (days)
-    dt_mult = 8 #Time step upscaling (-)
-    #set_transition_runtime = 1 #dt after an operational period change [days] #1e-3
-
     depth_to_top = 0
 
     ### ============== Run Simulation =====================
@@ -184,33 +153,34 @@ def run_DARTS (simulation_name,
     m = Model(dX_array, dY_array, dZ_array,
               nly_top, nly_res, nly_bot,
               perm_h, perm_v, poro, hcap, tcond,
-              actnum,
               hwx, hwy, well_diameter,
               depth_to_top, geothermal_grad,
-              dt_mult, max_ts,
               n_points = n_points)
     m.init()
     m.set_output(output_folder = output_folder)
 
     iterr = 1
-    for k in range(set_run_years):
+    for k in range(nyears):
         for i, runtime in enumerate(operational_profile):
             if storage_periods[i] == 'Charge':
 
                 m.set_rate_hot(volumetric_rate, temp=InjT, func='inj')
                 m.set_rate_cold(-1 * volumetric_rate, func='prod')
+                m.set_rate_obs(0, func='prod')
                 print('Operation: Charge')
 
             elif storage_periods[i] == 'Discharge':
 
                 m.set_rate_hot(-1 * volumetric_rate, func='prod')
                 m.set_rate_cold(volumetric_rate, temp=TCutOff, func='inj')
+                m.set_rate_obs(0, func='prod')
                 print('Operation: Discharge')
 
             elif storage_periods[i] == 'Rest':
 
                 m.set_rate_hot(0, func='prod')
                 m.set_rate_cold(0, func='prod')
+                m.set_rate_obs(0, func='prod')
                 print('Operation: Rest')
 
             m.run(runtime, restart_dt=set_transition_runtime)
