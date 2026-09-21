@@ -3,15 +3,19 @@ from darts.physics.base.property_container import PropertyContainer
 from dartsflash.mixtures import DARTSFlash, CompData, EoS, IAPWS
 from darts.physics.properties.basic import ConstFunc, PhaseRelPerm
 # Needed for the original workings of DARTS with better viscosity evaluation
-#from darts.physics.properties.viscosity import MaoDuan2009
+from darts.physics.properties.viscosity import MaoDuan2009
 
 from darts.models.darts_model import DartsModel
-from darts.engines import redirect_darts_output, well_control_iface
+from darts.engines import redirect_darts_output, well_control_iface, sim_params
 from darts.physics.properties.eos_properties import EoSEnthalpy
 from darts.physics.properties.flash import SinglePhase
 from darts.reservoirs.struct_reservoir import StructReservoir
 from dartsflash.components import CompData
 from darts.nonlinear_solvers import NewtonSolver, ChopSpec
+from darts.linear_solvers import (
+    CPRSolverSpec,
+    GMRESSolverSpec,
+)
 
 redirect_darts_output('LogFile_Run_HT_ATES_DELFT.log')
 
@@ -53,20 +57,21 @@ class Model(DartsModel):
                  dx_array, dy_array, dz_array,
                  nly_top, nly_res, nly_bot,
                  permXYZ_h, permXYZ_v, poroXYZ, hcapXYZ, tcondXYZ,
-                 actnum,
                  hwx, hwy, well_diameter,
                  depth_to_top, geothermal_grad,
-                 ts_mult, ts_max,
-                 n_points=128):
+                 n_points=128, gmres_restart=40, verbose=True):
         # call base class constructor
         super().__init__()
 
         self.timer.node["initialization"].start()
         self.platform = 'cpu'
+        self.gmres_restart = gmres_restart
         # #------------Set Node Number------------
         self.nly_top = int(nly_top)  # layer number in cap rock
         self.nly_res = int(nly_res)  # int(n_ly[1]) # layer number in reservoir rock
         self.nly_bot = int(nly_bot)  # layer number in bottom formation
+
+        print("nly_passed", self.nly_top, self.nly_res, self.nly_bot)
 
         nx = len(dx_array)
         print("nx basic ates", nx)
@@ -79,21 +84,19 @@ class Model(DartsModel):
         self.hwy = hwy
         self.well_diameter = well_diameter
 
-        self.ohwx = hwx + 10 #observation well at 10 meters apart
-        self.ohwy = hwy
+        self.owx = hwx + 5 #observation well at 10 meters apart
+        self.owy = hwy
 
         perm_h = permXYZ_h.ravel(order = 'F')
         perm_v = permXYZ_v.ravel(order= 'F')
         poro = poroXYZ.ravel(order= 'F')
         hcap = hcapXYZ.ravel(order= 'F')
         tcond = tcondXYZ.ravel(order = 'F')
-        actnum_F = actnum.ravel(order = 'F')
 
         self.reservoir = StructReservoir(self.timer, nx=nx, ny=ny, nz=nz,
                                          dx=dx_array, dy=dy_array, dz=dz_array,
                                          permx=perm_h, permy=perm_h, permz=perm_v,
-                                         poro=poro, start_z=depth_to_top, hcap=hcap, rcond=tcond,
-                                         actnum = actnum_F)
+                                         poro=poro, start_z=depth_to_top, hcap=hcap, rcond=tcond)
 
         self.reservoir.boundary_volumes['yz_minus'] = 1e20
         self.reservoir.boundary_volumes['yz_plus'] = 1e20
@@ -107,25 +110,38 @@ class Model(DartsModel):
         # Pre-defined physics single phase, single component
         self.set_physics_super(zero=1e-12, n_points=n_points, components=["H2O"])
 
-        self.ts_control.dt_first = 1e-12 #days
-        self.ts_control.dt_mult = 4 #days
-        self.ts_control.dt_max = 1 #days
-        self.ts_control.runtime = 5 #days
-
-        # Solver settings
-        super().set_solver() # Check if I need this
-        self.nonlinear_solver.spec.tolerance = 1e-3
-        self.nonlinear_solver.spec.max_iterations = 20
-        self.linear_solver.spec.tolerance = 1e-6
-        self.linear_solver.spec.max_iterations = 50
-
         # Try both below to see which one works
-        self.nonlinear_solver.spec.chop = ChopSpec(mode='global', factor=1.0)
+        # self.nonlinear_solver.spec.chop = ChopSpec(mode='global', factor=1.0)
         #self.nonlinear_solver = NewtonSolver(tolerance=1e-3, max_iterations=20, chop=ChopSpec(mode='global', factor=1.0))
 
         self.timer.node["initialization"].stop()
         # Check if I need it, maybe useful
         self.print_config()
+    
+    def set_solver(self):
+        self.ts_control.dt_first = 1e-9
+        self.ts_control.dt_mult = 4
+        self.ts_control.dt_max = 1
+        self.ts_control.runtime = 5
+        self.ts_control.dt_min = 1e-15
+
+        self.nonlinear_solver = NewtonSolver(
+            tolerance=1e-3,
+            max_iterations=20,
+            chop=ChopSpec(mode='global', factor=1)
+        )
+
+        self.linear_solver.spec = GMRESSolverSpec(
+            tolerance=1e-6,
+            max_iterations=50,
+            restart=self.gmres_restart,
+            proprietary_linear_type=sim_params.cpu_gmres_cpr_amg,
+            prec=CPRSolverSpec()
+        )
+
+        self.params.linear_type = sim_params.cpu_gmres_cpr_amg
+
+        super().set_solver()
 
     def set_physics_super(self, zero, n_points, components):
         """Physical properties"""
@@ -147,12 +163,10 @@ class Model(DartsModel):
 
         property_container.enthalpy_ev = {"L": EoSEnthalpy(eos=iapws.eos["IAPWS"], root_flag=EoS.RootFlag.MIN)}
 
-        ### Before modification
-        # property_container.flash_ev = NegativeFlash2(flash_params)
-        # property_container.flash_ev = SinglePhase(nc=2)
-
         ### Locally defined density & viscosity relations
-        property_container.density_ev = {'L': Sharqawy2012()}
+
+        #property_container.density_ev = {'L': Sharqawy2012()}
+        property_container.density_ev = {'L' : ConstFunc(999)}
         property_container.viscosity_ev = {'L': Voss1984()}
 
         ### DARTS OG density & viscosity relations
@@ -163,10 +177,11 @@ class Model(DartsModel):
 
         property_container.rel_perm_ev = {'L': PhaseRelPerm("wat", swc=0.0)}
 
-        property_container.conductivity_ev = {'L': ConstFunc(172.8)} # kJ/m/day/K
+        #property_container.conductivity_ev = {'L': ConstFunc(172.8)} # kJ/m/day/K
+        property_container.conductivity_ev = {'L' : ConstFunc(0.58*24*3.6)}
         property_container.capillary_pressure_ev = {'L': ConstFunc(0.)}
 
-
+        # Set physics ranges
         p_min = 0.01
         p_max = 50.0
         T_min = 273.15
@@ -185,11 +200,7 @@ class Model(DartsModel):
             state_spec=PhysicsBase.StateSpecification.PT,
             cache=False
         )
-
-        #self.physics = Compositional(components, phases, self.timer, n_points, min_p=0.01, max_p=50, min_z=zero / 10,
-                                     #max_z=1 - zero / 10, min_t=273.15 + 5, max_t=400, epsilon_z= zero/10,
-                                     #state_spec=Compositional.StateSpecification.PT, cache=False)
-        #self.physics.thermal = thermal
+        
         self.physics.add_property_region(property_container)
         self.physics.init_physics()
 
@@ -210,8 +221,35 @@ class Model(DartsModel):
                 well_diameter = self.well_diameter,
                 verbose=True,
                 well_indexD=0,
-                skin = 10, #Important should I do anything with the skinnfactor? I am not really looking at production data anyway
+                skin = 10, #Important should I do anything with the skin factor? I am not really looking at production data anyway
                 ms_epm = False)
+
+    ## Multi-perf
+    def set_wells_mf(self):
+        #multiperforation well
+        top_ind = self.nly_top
+        for k in np.arange(self.nly_top + 1, self.nly_top + self.nly_res + 1, 1):
+            well_name = f"H_{k + 1}"
+            self.reservoir.add_well(well_name)
+            self.reservoir.add_perforation(
+                well_name,
+                res_cell_idx=(self.hwx, self.hwy, k),
+                well_diameter=self.well_diameter,
+                verbose=True,
+                well_indexD=0,
+                skin=10,
+                ms_epm = False)
+
+            well_name = f"O_{k + 1}"
+            self.reservoir.add_well(well_name)
+            self.reservoir.add_perforation(
+                well_name,
+                res_cell_idx=(self.owx, self.owy, k),
+                well_diameter=0.001,
+                verbose=True,
+                well_indexD=0,
+                skin=10,
+                ms_epm=False)
 
     def set_initial_conditions(self):
         input_depth = [0., np.amax(self.reservoir.mesh.depth)]
@@ -265,3 +303,17 @@ class Model(DartsModel):
                                                    is_inj=False, target=rate, phase_name='L')
                     # w.constraint = self.physics.new_bhp_prod(self.midrespress - self.bhp_limit)
 
+    def set_rate_obs(self, rate, temp=300, func='inj'):
+        # w = self.reservoir.wells[welln]
+        for w in self.reservoir.wells:
+            if 'O' in w.name:
+                if func == 'inj':
+                    self.physics.set_well_controls(wctrl=w.control,
+                                                   control_type=well_control_iface.VOLUMETRIC_RATE,
+                                                   is_inj=False, target=rate, phase_name='L')
+                    # w.constraint = self.physics.new_bhp_water_inj(self.midrespress + self.bhp_limit, temp)
+                if func == 'prod':
+                    self.physics.set_well_controls(wctrl=w.control,
+                                                   control_type=well_control_iface.VOLUMETRIC_RATE,
+                                                   is_inj=False, target=rate, phase_name='L')
+                    # w.constraint = self.physics.new_bhp_prod(self.midrespress - self.bhp_limit)
