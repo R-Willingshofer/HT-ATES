@@ -92,7 +92,7 @@ uni_mod = create_geomodel_uni_dxy(nx, ny, nz_at_top, nz_aq, nz_at_bot,
                                   hwx, hwy)
 
 
-run_DARTS ("case_synthetic_no_obswell_gridext_v300_dens",
+run_DARTS ("case_synthetic_no_obswell_gridext_v300",
            uni_mod,
            1,
            20, 5,
