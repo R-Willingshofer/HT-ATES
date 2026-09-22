@@ -3,7 +3,8 @@ from darts.physics.base.property_container import PropertyContainer
 from dartsflash.mixtures import DARTSFlash, CompData, EoS, IAPWS
 from darts.physics.properties.basic import ConstFunc, PhaseRelPerm
 # Needed for the original workings of DARTS with better viscosity evaluation
-from darts.physics.properties.viscosity import MaoDuan2009
+from darts.physics.properties.viscosity import MaoDuan2009, Viscosity
+from darts.physics.properties.density import Density
 
 from darts.models.darts_model import DartsModel
 from darts.engines import redirect_darts_output, well_control_iface, sim_params
@@ -25,7 +26,7 @@ set_num_threads(4)
 
 import numpy as np
 
-class Sharqawy2012:
+class Sharqawy2012(Density):
     """
     Water density correlation.
     """
@@ -38,7 +39,7 @@ class Sharqawy2012:
         return rho
 
 
-class Voss1984:
+class Voss1984(Viscosity):
     """
     Water viscosity correlation.
     """
@@ -46,9 +47,9 @@ class Voss1984:
     def evaluate(self, pressure, temperature, x, rho):
         T = temperature - 273.15
 
-        mu = 2.394e-5 * (10.0 ** (248.37 / (T + 133.15)))
+        mu = 2.394e-5 * 10.0**(248.37 / (T + 133.15))
 
-        return mu
+        return mu * 1e3
 
 # %%
 class Model(DartsModel):
@@ -165,8 +166,8 @@ class Model(DartsModel):
 
         ### Locally defined density & viscosity relations
 
-        #property_container.density_ev = {'L': Sharqawy2012()}
-        property_container.density_ev = {'L' : ConstFunc(999)}
+        property_container.density_ev = {'L': Sharqawy2012()}
+        #property_container.density_ev = {'L' : ConstFunc(999)}
         property_container.viscosity_ev = {'L': Voss1984()}
 
         ### DARTS OG density & viscosity relations
