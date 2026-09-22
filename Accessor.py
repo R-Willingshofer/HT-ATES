@@ -3,6 +3,8 @@ from Run_ATES import create_geomodel_confined_disc_opt
 from Run_ATES import create_geomodel_uni_dxy
 from plot_results import plot_timeseries, plot_cross_section
 
+sim_name = "case_synthetic_no_obswell_gridext_v300_dens"
+
 ### Model dimensions
 nx = 100 # correct would be 200
 ny = 100 # correct would be 200
@@ -73,7 +75,7 @@ dt_mult = 4
 Tin = 20 # deg C
 #Q_cell = 100000/(daysprofile[0]*nz_aq)  #100000/(daysprofile[0] * nz_aq) # m3/day #Note this is the flowrate per perforation
 print("Injection time:", daysprofile[0])
-Q_cell = 300000/(daysprofile[0])
+Q_cell = 100000/(daysprofile[0])
 print("Volumetric rate:", Q_cell)
 well_diameter = 1 # m
 
@@ -92,7 +94,7 @@ uni_mod = create_geomodel_uni_dxy(nx, ny, nz_at_top, nz_aq, nz_at_bot,
                                   hwx, hwy)
 
 
-run_DARTS ("case_synthetic_no_obswell_gridext_v300",
+run_DARTS (sim_name,
            uni_mod,
            1,
            20, 5,
@@ -101,9 +103,9 @@ run_DARTS ("case_synthetic_no_obswell_gridext_v300",
            well_diameter = 1,
            n_points = 256) #ensure that n-points is correctly inferred in the other scripts
 
-plot_timeseries("case_synthetic_no_obswell_gridext_v300", "H_1")
+plot_timeseries(sim_name, "H_1")
 
 time_step_list = [0, 1, 2, 3, 4]
-plot_cross_section("case_synthetic_no_obswell_gridext_v300",
+plot_cross_section(sim_name,
                    time_step_list,
                    nx, ny, int(nz_at_top + nz_aq + nz_at_bot), hwx)
